@@ -1,1 +1,1421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inside the BashOperator - Tracing Airflow Internals</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/theme/black.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/plugin/highlight/monokai.min.css">
+    <style>
+        :root {
+            --airflow-teal: #00C7B7;
+            --accent-orange: #FF6B35;
+            --dark-bg: #1a1a2e;
+            --card-bg: #16213e;
+        }
 
+        .reveal {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 28px;
+        }
+
+        .reveal .slides section {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+        }
+
+        .reveal h1 {
+            color: var(--airflow-teal);
+            text-transform: none;
+            font-size: 2em;
+            margin-bottom: 0.3em;
+        }
+
+        .reveal h2 {
+            color: var(--airflow-teal);
+            text-transform: none;
+            font-size: 1.6em;
+            margin-bottom: 0.4em;
+        }
+
+        .reveal h3 {
+            color: var(--airflow-teal);
+            text-transform: none;
+            font-size: 1.2em;
+            margin-bottom: 0.3em;
+        }
+
+        .reveal section {
+            text-align: left;
+        }
+
+        .center-content {
+            text-align: center !important;
+        }
+
+        .emoji {
+            font-size: 1.5em;
+            vertical-align: middle;
+        }
+
+        .highlight-box {
+            background: var(--card-bg);
+            border-left: 4px solid var(--airflow-teal);
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 12px;
+            border: 2px solid var(--airflow-teal);
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent-orange);
+        }
+
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: var(--airflow-teal);
+            margin: 5px 0;
+        }
+
+        .stat-label {
+            font-size: 1em;
+            color: #ccc;
+        }
+
+        .flow-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            margin: 15px 0;
+        }
+
+        .flow-item {
+            background: var(--card-bg);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 2px solid var(--airflow-teal);
+            font-size: 1em;
+            width: 80%;
+            text-align: center;
+        }
+
+        .flow-arrow {
+            color: var(--accent-orange);
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .code-container {
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .bar-chart {
+            margin: 20px 0;
+        }
+
+        .bar-item {
+            display: flex;
+            align-items: center;
+            margin: 15px 0;
+            gap: 15px;
+        }
+
+        .bar-label {
+            width: 200px;
+            font-family: monospace;
+            color: var(--airflow-teal);
+        }
+
+        .bar-visual {
+            height: 25px;
+            background: linear-gradient(90deg, var(--airflow-teal), var(--accent-orange));
+            border-radius: 4px;
+            transition: width 1s ease;
+        }
+
+        .bar-count {
+            color: #999;
+            font-size: 0.9em;
+        }
+
+        .discovery-card {
+            background: linear-gradient(135deg, var(--card-bg), #1a1a40);
+            border: 2px solid var(--accent-orange);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+
+        .discovery-title {
+            color: var(--accent-orange);
+            font-size: 1.5em;
+            margin-bottom: 15px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: var(--card-bg);
+            border-radius: 6px;
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        .operation-item {
+            transition: all 0.5s ease;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+
+        .operation-item.scheduler {
+            color: #4CAF50 !important;
+            background: rgba(76, 175, 80, 0.1);
+            font-weight: bold;
+        }
+
+        .operation-item.triggerer {
+            color: #2196F3 !important;
+            background: rgba(33, 150, 243, 0.1);
+            font-weight: bold;
+        }
+
+        .operation-item.monitoring {
+            color: #FF9800 !important;
+            background: rgba(255, 152, 0, 0.1);
+            font-weight: bold;
+        }
+
+        .operation-item.dag {
+            color: #9C27B0 !important;
+            background: rgba(156, 39, 176, 0.1);
+            font-weight: bold;
+        }
+
+        .category-label {
+            display: inline-block;
+            font-size: 0.7em;
+            margin-left: 5px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .operation-item.scheduler .category-label {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .operation-item.triggerer .category-label {
+            background: #2196F3;
+            color: white;
+        }
+
+        .operation-item.monitoring .category-label {
+            background: #FF9800;
+            color: white;
+        }
+
+        .operation-item.dag .category-label {
+            background: #9C27B0;
+            color: white;
+        }
+
+        .operation-item .category-label.show {
+            opacity: 1;
+        }
+
+        .slide-number {
+            color: var(--airflow-teal) !important;
+        }
+
+        .two-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .reveal ul, .reveal ol {
+            margin: 8px 0;
+        }
+
+        .reveal li {
+            margin: 4px 0;
+        }
+
+        .list-icon {
+            color: var(--airflow-teal);
+            margin-right: 10px;
+        }
+
+        .logo-overlay {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 150px;
+            height: auto;
+            z-index: 1000;
+        }
+
+        /* Laser pointer cursor effect */
+        .reveal {
+            cursor: none;
+        }
+
+        #laser-pointer {
+            position: fixed;
+            width: 30px;
+            height: 30px;
+            border: 3px solid #ff0000;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 10000;
+            box-shadow: 0 0 20px #ff0000, 0 0 40px #ff0000, inset 0 0 10px #ff0000;
+            transform: translate(-50%, -50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        #laser-pointer.active {
+            opacity: 0.8;
+        }
+
+        #laser-pointer::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 6px;
+            height: 6px;
+            background: #ff0000;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px #ff0000;
+        }
+
+        .large-emoji {
+            font-size: 5em;
+            margin: 30px 0;
+        }
+
+        .quote-box {
+            background: var(--card-bg);
+            border-left: 5px solid var(--accent-orange);
+            padding: 20px;
+            margin: 20px 0;
+            font-style: italic;
+            font-size: 1.2em;
+        }
+
+        .tech-stack {
+            display: flex;
+            justify-content: space-around;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+
+        .tech-item {
+            text-align: center;
+            padding: 20px;
+            background: var(--card-bg);
+            border-radius: 8px;
+            min-width: 150px;
+            margin: 10px;
+        }
+
+        .hidden-complexity {
+            font-size: 0.8em;
+            color: #666;
+            text-decoration: line-through;
+        }
+
+        .revealed-complexity {
+            font-size: 1.2em;
+            color: var(--accent-orange);
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="laser-pointer"></div>
+    <img src="airflow_summit_2025.svg" class="logo-overlay" alt="Airflow Summit 2025">
+    <div class="reveal">
+        <div class="slides">
+
+            <!-- Slide 1: Title -->
+            <section data-background-image="first_slide_airflow_summit_talk.png" data-background-size="cover">
+            </section>
+
+            <!-- Slide 2: Problem Statement -->
+            <section class="center-content" data-background-color="#1a1a2e">
+                <h1 style="font-size: 2.8em; color: white; margin-bottom: 50px;">Airflow 3 - An Open Heart Surgery</h1>
+                <div class="highlight-box" style="font-size: 1.4em; line-height: 1.6; max-width: 900px; margin: 0 auto;">
+                    <p style="color: #ccc;">
+                        Curious how code <strong style="color: var(--airflow-teal);">truly flows</strong> inside Airflow?
+                    </p>
+                    <p style="color: #ccc; margin-top: 30px;">
+                        Join me for a <strong style="color: var(--accent-orange);">unique visualisation journey</strong> into Airflow's inner workings
+                        <span style="color: var(--airflow-teal);">(first of its kind)</span> — revealing the code blocks and modules called when operations are running.
+                    </p>
+                </div>
+                <div class="large-emoji" style="font-size: 4em; margin-top: 50px;">🔬</div>
+            </section>
+
+            <!-- Slide 3: Our Approach -->
+            <section>
+                <h2>How Do We Explore Airflow's Inner Workings?</h2>
+
+                <div class="fragment" style="margin: 30px 0;">
+                    <h3 style="color: var(--accent-orange);">🤔 The Options</h3>
+                    <ul style="font-size: 0.95em;">
+                        <li>Read documentation?</li>
+                        <li>Browse source code on GitHub?</li>
+                    </ul>
+                </div>
+
+                <div class="fragment highlight-box" style="margin: 30px 0;">
+                    <h3 style="color: var(--airflow-teal); margin-bottom: 15px;">✅ Our Approach: Start Fresh</h3>
+                    <div class="code-container" style="margin: 15px 0;">
+                        <pre><code class="language-bash">pip install apache-airflow
+airflow standalone</code></pre>
+                    </div>
+                    <p style="font-size: 0.95em; color: #ccc; margin-top: 15px;">
+                        👉 The same starting point <strong style="color: var(--airflow-teal);">every user gets</strong>
+                    </p>
+                </div>
+
+                <div class="fragment" style="margin: 30px 0;">
+                    <div class="discovery-card" style="text-align: center; padding: 25px;">
+                        <h3 style="color: var(--accent-orange); font-size: 1.3em;">🚀 The Journey Begins</h3>
+                        <p style="font-size: 1.1em; margin-top: 15px;">
+                            Not by reading docs, but by <strong style="color: var(--airflow-teal);">exploring and running tasks</strong>
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 3.5: Raw Logs -->
+            <section>
+                <h2>What We See First: The Raw Logs</h2>
+                <div class="fragment" style="text-align: center; margin-top: 20px;">
+                    <img src="airflow-3-standalone-raw-logs.png" alt="Airflow 3 Standalone Raw Logs" style="max-height: 600px; margin: 10px auto; display: block; border-radius: 8px; border: 2px solid var(--card-bg);">
+                </div>
+            </section>
+
+            <!-- Slide 4: OpenTelemetry Setup -->
+            <section>
+                <h2>🔭 Unlocking Visibility with OpenTelemetry</h2>
+
+                <div class="two-columns" style="gap: 30px; margin-top: 30px;">
+                    <div>
+                        <div class="fragment">
+                            <h3 style="color: var(--accent-orange); margin-bottom: 15px;">Step 1: Setup OTEL Collector</h3>
+                            <div class="code-container">
+                                <pre><code class="language-bash"># otel-collector binary
+./otelcol-contrib --config=config.yaml
+</code></pre>
+                            </div>
+                        </div>
+
+                        <div class="fragment" style="margin-top: 25px;">
+                            <h3 style="color: var(--accent-orange); margin-bottom: 15px;">Step 2: Enable OTEL Traces in Airflow</h3>
+                            <div class="code-container">
+                                <pre><code class="language-ini"># airflow.cfg
+[traces]
+otel_on = True
+otel_debug_traces_on = True
+otel_host = localhost
+otel_port = 4318
+otel_service = Airflow
+</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="fragment">
+                            <h3 style="color: var(--accent-orange); margin-bottom: 15px;">Step 3: Launch Jaeger</h3>
+                            <div class="code-container">
+                                <pre><code class="language-bash">docker run -d \
+  --name jaeger \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  jaegertracing/all-in-one:latest</code></pre>
+                            </div>
+                        </div>
+
+                        <div class="fragment" style="margin-top: 25px;">
+                            <div class="highlight-box" style="text-align: center;">
+                                <h3 style="color: var(--airflow-teal); font-size: 1.2em; margin-bottom: 10px;">✨ Result</h3>
+                                <p style="font-size: 0.95em;">Real-time trace visualization at</p>
+                                <p style="color: var(--accent-orange); font-size: 1.1em; margin-top: 5px;">
+                                    <code>http://localhost:16686</code>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="fragment" style="margin-top: 30px; text-align: center;">
+                    <p style="font-size: 1.2em; color: var(--airflow-teal);">
+                        🎯 Now we can see <strong style="color: var(--accent-orange);">airflow core function calls</strong> in real-time!
+                    </p>
+                </div>
+            </section>
+
+            <!-- Slide 5: Jaeger Traces Main Page -->
+            <section>
+                <h2>📊 Visualizing Traces in Jaeger</h2>
+                <div class="fragment" style="text-align: center; margin-top: 20px;">
+                    <img src="jaeger_home_page_explanation.png" alt="Jaeger Home Page Explanation" style="max-height: 600px; margin: 10px auto; display: block; border-radius: 8px; border: 2px solid var(--card-bg);">
+                </div>
+            </section>
+
+            <!-- Slide 5: Jaeger Details Page -->
+            <section>
+                <h2>📊 Visualizing Traces Details in Jaeger</h2>
+                <div class="fragment" style="text-align: center; margin-top: 20px;">
+                    <img src="jaeger_detail_span_scheduler_job_loop.png" alt="Jaeger Detial Span Scheduler" style="max-height: 600px; margin: 10px auto; display: block; border-radius: 8px; border: 2px solid var(--card-bg);">
+                </div>
+            </section>
+
+
+            <!-- Slide 6: Airflow Internal Operations -->
+            <section id="operations-slide">
+                <h2>🔍 Airflow Internal Operations Discovered</h2>
+                <p style="font-size: 0.9em; color: #999; margin-bottom: 20px;">Service: <strong style="color: var(--airflow-teal);">Airflow</strong> • Total Operations: <strong style="color: var(--airflow-teal);">20</strong></p>
+
+                <!-- Category Legend (shown after first click) -->
+                <div id="category-legend" style="display: none; margin-bottom: 20px; font-size: 0.75em; text-align: center; opacity: 0; transition: opacity 0.5s ease;">
+                    <span style="color: #4CAF50; font-weight: bold;">■</span> Scheduler &nbsp;&nbsp;
+                    <span style="color: #2196F3; font-weight: bold;">■</span> Triggerer &nbsp;&nbsp;
+                    <span style="color: #FF9800; font-weight: bold;">■</span> Monitoring &nbsp;&nbsp;
+                    <span style="color: #9C27B0; font-weight: bold;">■</span> DAG Runs
+                </div>
+
+                <!-- Alphabetical list with data attributes for categorization -->
+                <div id="alphabetical-list" style="columns: 3; column-gap: 20px; font-size: 0.7em;">
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">_create_dag_runs<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">_schedule_dag_run<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">_start_queued_dagruns<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">_update_state<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="monitoring" style="color: #999; margin: 3px 0;">clean_unused<span class="category-label">Monitoring</span></div>
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">current_scheduler_exited<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="monitoring" style="color: #999; margin: 3px 0;">emit_metrics<span class="category-label">Monitoring</span></div>
+                    <div class="operation-item" data-category="monitoring" style="color: #999; margin: 3px 0;">emit_pool_metrics<span class="category-label">Monitoring</span></div>
+                    <div class="operation-item" data-category="monitoring" style="color: #999; margin: 3px 0;">handle_events<span class="category-label">Monitoring</span></div>
+                    <div class="operation-item" data-category="triggerer" style="color: #999; margin: 3px 0;">handle_failed_triggers<span class="category-label">Triggerer</span></div>
+                    <div class="operation-item" data-category="monitoring" style="color: #999; margin: 3px 0;">heartbeat<span class="category-label">Monitoring</span></div>
+                    <div class="operation-item" data-category="triggerer" style="color: #999; margin: 3px 0;">load_triggers<span class="category-label">Triggerer</span></div>
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">new_scheduler<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="monitoring" style="color: #999; margin: 3px 0;">perform_heartbeat<span class="category-label">Monitoring</span></div>
+                    <div class="operation-item" data-category="dag" style="color: #999; margin: 3px 0;">read_secret_traditional_recreated<span class="category-label">DAG</span></div>
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">scheduler_job_loop<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="scheduler" style="color: #999; margin: 3px 0;">trigger_tasks<span class="category-label">Scheduler</span></div>
+                    <div class="operation-item" data-category="triggerer" style="color: #999; margin: 3px 0;">triggerer_job_loop<span class="category-label">Triggerer</span></div>
+                </div>
+
+                <!-- Categorized view (removed) -->
+                <div id="categorized-view" style="display: none;">
+                    <div class="two-columns" style="gap: 20px;">
+                        <div>
+                            <h3 style="color: var(--accent-orange); margin-bottom: 15px;">📊 Scheduler Operations</h3>
+                            <div class="bar-chart" style="font-size: 0.75em;">
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">scheduler_job_loop</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">_schedule_dag_run</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">_create_dag_runs</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">_start_queued_dagruns</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">_update_state</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">new_scheduler</div><div style="color: var(--airflow-teal);">✓</div></div>
+                            </div>
+
+                            <h3 style="color: var(--accent-orange); margin-top: 15px; margin-bottom: 15px;">⚡ Triggerer Operations</h3>
+                            <div class="bar-chart" style="font-size: 0.75em;">
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">triggerer_job_loop</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">load_triggers</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">handle_failed_triggers</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">trigger_tasks</div><div style="color: var(--airflow-teal);">✓</div></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 style="color: var(--accent-orange); margin-bottom: 15px;">💓 Heartbeat & Monitoring</h3>
+                            <div class="bar-chart" style="font-size: 0.75em;">
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">perform_heartbeat</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">heartbeat</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">emit_metrics</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">emit_pool_metrics</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">handle_events</div><div style="color: var(--airflow-teal);">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">clean_unused</div><div style="color: var(--airflow-teal);">✓</div></div>
+                            </div>
+
+                            <h3 style="color: var(--accent-orange); margin-top: 15px; margin-bottom: 15px;">🎯 DAG Runs (Examples)</h3>
+                            <div class="bar-chart" style="font-size: 0.7em;">
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">example_astronauts</div><div style="color: #999;">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">secret_reader_dag</div><div style="color: #999;">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">traced_dag</div><div style="color: #999;">✓</div></div>
+                                <div class="bar-item category-item"><div class="bar-label" style="width: 240px;">airflow_trace_test</div><div style="color: #999;">✓</div></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="highlight-box category-item" style="margin-top: 15px; text-align: center;">
+                        <p style="font-size: 0.95em;">
+                            ⚙️ Airflow's core internal operations — <strong style="color: var(--accent-orange);">scheduler, triggerer, heartbeat, metrics</strong>
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 7: Category Summary -->
+            <section class="center-content">
+                <h2>Understanding Airflow's Architecture</h2>
+                <p style="font-size: 1.1em; color: #ccc; margin-bottom: 40px;">
+                    We've categorized Airflow 3's native traces into <strong style="color: var(--airflow-teal);">4 main categories</strong>
+                </p>
+
+                <div class="stats-grid" style="max-width: 900px; margin: 0 auto;">
+                    <div class="stat-card">
+                        <div style="font-size: 2.5em; color: #4CAF50;">📊</div>
+                        <h3 style="color: #4CAF50; font-size: 1.2em; margin: 15px 0;">Scheduler</h3>
+                        <p style="font-size: 0.85em; color: #ccc;">Core orchestration logic</p>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size: 2.5em; color: #2196F3;">⚡</div>
+                        <h3 style="color: #2196F3; font-size: 1.2em; margin: 15px 0;">Triggerer</h3>
+                        <p style="font-size: 0.85em; color: #ccc;">Async event handling</p>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size: 2.5em; color: #FF9800;">💓</div>
+                        <h3 style="color: #FF9800; font-size: 1.2em; margin: 15px 0;">Monitoring</h3>
+                        <p style="font-size: 0.85em; color: #ccc;">Health & metrics</p>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size: 2.5em; color: #9C27B0;">🎯</div>
+                        <h3 style="color: #9C27B0; font-size: 1.2em; margin: 15px 0;">DAG Runs</h3>
+                        <p style="font-size: 0.85em; color: #ccc;">Workflow executions</p>
+                    </div>
+                </div>
+
+                <div class="highlight-box" style="max-width: 800px; margin: 40px auto 0;">
+                    <p style="font-size: 1.1em; text-align: center;">
+                        💡 Let's keep these categories in mind as we <strong style="color: var(--accent-orange);">dive deeper</strong> into Airflow's internals
+                    </p>
+                </div>
+            </section>
+
+            <!-- Slide 8: The Code -->
+            <section>
+                <h2>It Starts Simple... Or Does It?</h2>
+                <div class="code-container">
+                    <pre><code class="language-python" data-line-numbers="1-4|6-10|12-16|18">from airflow.providers.standard.operators.bash import BashOperator
+from airflow import DAG
+from datetime import datetime
+
+dag = DAG(
+    'demo_dag',
+    start_date=datetime(2024, 1, 1),
+    schedule=None,
+)
+
+bash_task = BashOperator(
+    task_id='simple_task',
+    bash_command='echo "Hello Airflow"',
+    dag=dag
+)
+
+bash_task.execute(context)</code></pre>
+                </div>
+                <p class="fragment highlight-box">
+                    Just 18 lines of simple Python code... 🤔
+                </p>
+            </section>
+
+            <!-- Slide 4: The Question -->
+            <section class="center-content" data-background-color="#16213e">
+                <h1 style="font-size: 3em;">But What Actually Happens<br>When You Call .execute()?</h1>
+                <div class="large-emoji pulse">🤔</div>
+            </section>
+
+            <!-- Slide 5: Traditional View -->
+            <section class="center-content">
+                <h2>What We Think Happens</h2>
+                <div class="flow-diagram">
+                    <div class="flow-item fragment">BashOperator.execute()</div>
+                    <div class="flow-arrow fragment">↓</div>
+                    <div class="flow-item fragment">subprocess.run()</div>
+                    <div class="flow-arrow fragment">↓</div>
+                    <div class="flow-item fragment">echo "Hello"</div>
+                    <div class="flow-arrow fragment">↓</div>
+                    <div class="flow-item fragment" style="border-color: #4CAF50; color: #4CAF50;">Done ✓</div>
+                </div>
+                <p class="fragment" style="text-align: center; font-size: 1.3em; margin-top: 30px;">
+                    Seems straightforward... right? 😊
+                </p>
+            </section>
+
+            <!-- Slide 6: Reality Check -->
+            <section>
+                <h2>What ACTUALLY Happens</h2>
+                <h3 style="color: var(--accent-orange); margin-bottom: 30px;">📊 By the Numbers:</h3>
+                <div class="stats-grid">
+                    <div class="stat-card fragment">
+                        <div class="stat-number">150+</div>
+                        <div class="stat-label">Function Invocations</div>
+                    </div>
+                    <div class="stat-card fragment">
+                        <div class="stat-number">15+</div>
+                        <div class="stat-label">Airflow Modules</div>
+                    </div>
+                    <div class="stat-card fragment">
+                        <div class="stat-number">40+</div>
+                        <div class="stat-label">Unique Functions</div>
+                    </div>
+                    <div class="stat-card fragment">
+                        <div class="stat-number">5+</div>
+                        <div class="stat-label">Major Components</div>
+                    </div>
+                </div>
+                <p class="fragment center-content" style="font-size: 1.5em; margin-top: 30px;">
+                    For a single <code>echo</code> command! 🤯
+                </p>
+            </section>
+
+            <!-- Slide 7: Live Demo Transition -->
+            <section class="center-content" data-background-gradient="linear-gradient(135deg, #FF6B35, #F7931E)">
+                <h1 style="font-size: 3em; color: white;">Let's Watch It Happen<br>In Real-Time</h1>
+                <div style="font-size: 5em; margin: 40px 0;">🎬</div>
+                <div style="background: white; color: #FF6B35; padding: 20px 40px; display: inline-block; border-radius: 10px; font-size: 1.5em; font-weight: bold;">
+                    LIVE DEMO
+                </div>
+            </section>
+
+            <!-- Slide 8: Demo Placeholder -->
+            <section data-background-color="#000000">
+                <div class="center-content" style="color: #333;">
+                    <p style="font-size: 0.8em;">[ Switch to Terminal for Live Demo ]</p>
+                    <p style="font-size: 0.6em;">Press 'B' to return to black screen</p>
+                </div>
+            </section>
+
+            <!-- Slide 9: Execution Breakdown -->
+            <section>
+                <h2>What We Just Saw</h2>
+                <div class="two-columns">
+                    <div>
+                        <h3 style="color: var(--accent-orange);">The Flow</h3>
+                        <div class="fragment">
+                            <div style="color: var(--airflow-teal); margin: 10px 0; font-size: 0.95em;">1️⃣ Initialization</div>
+                            <ul style="font-size: 0.85em; margin-left: 20px; margin-bottom: 8px;">
+                                <li>Import modules</li>
+                                <li>Create DAG & task</li>
+                            </ul>
+                        </div>
+                        <div class="fragment">
+                            <div style="color: var(--airflow-teal); margin: 10px 0; font-size: 0.95em;">2️⃣ Pre-Execution</div>
+                            <ul style="font-size: 0.85em; margin-left: 20px; margin-bottom: 8px;">
+                                <li>Context building</li>
+                                <li>Template rendering (if any)</li>
+                            </ul>
+                        </div>
+                        <div class="fragment">
+                            <div style="color: var(--airflow-teal); margin: 10px 0; font-size: 0.95em;">3️⃣ Execution</div>
+                            <ul style="font-size: 0.85em; margin-left: 20px; margin-bottom: 8px;">
+                                <li>Subprocess management</li>
+                                <li>Output capture</li>
+                            </ul>
+                        </div>
+                        <div class="fragment">
+                            <div style="color: var(--airflow-teal); margin: 10px 0; font-size: 0.95em;">4️⃣ Post-Execution</div>
+                            <ul style="font-size: 0.85em; margin-left: 20px; margin-bottom: 8px;">
+                                <li>Logging</li>
+                                <li>State updates</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 style="color: var(--accent-orange);">📦 Key Modules</h3>
+                        <div class="flow-diagram" style="font-size: 0.85em;">
+                            <div class="flow-item fragment" style="background: #2a2a4e; padding: 10px 20px;">sdk.bases.operator</div>
+                            <div class="flow-arrow fragment" style="font-size: 1.5em;">↓</div>
+                            <div class="flow-item fragment" style="background: #2a2a4e; padding: 10px 20px;">providers.standard.operators.bash</div>
+                            <div class="flow-arrow fragment" style="font-size: 1.5em;">↓</div>
+                            <div class="flow-item fragment" style="background: #2a2a4e; padding: 10px 20px;">sdk.execution_time.context</div>
+                            <div class="flow-arrow fragment" style="font-size: 1.5em;">↓</div>
+                            <div class="flow-item fragment" style="background: #2a2a4e; padding: 10px 20px;">hooks.subprocess</div>
+                            <div class="flow-arrow fragment" style="font-size: 1.5em;">↓</div>
+                            <div class="flow-item fragment" style="background: #2a2a4e; padding: 10px 20px;">utils.log</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+
+            <!-- Slide 13: Discovery 1 -->
+            <section>
+                <h2>💡 Discovery #1: The Subprocess Safety Net</h2>
+                <div class="discovery-card">
+                    <p style="font-size: 1.2em; margin-bottom: 25px;">BashOperator doesn't just call <code>subprocess.run()</code>...</p>
+                    <h3 style="color: var(--accent-orange); margin-bottom: 15px;">IT ADDS:</h3>
+                    <div class="feature-grid">
+                        <div class="feature-item fragment">🔒 Process isolation</div>
+                        <div class="feature-item fragment">📝 Output buffering</div>
+                        <div class="feature-item fragment">⏱️ Timeout handling</div>
+                        <div class="feature-item fragment">🚨 Signal management</div>
+                        <div class="feature-item fragment">📊 Exit code interpretation</div>
+                        <div class="feature-item fragment">🔄 Retry logic</div>
+                        <div class="feature-item fragment">📋 Environment vars</div>
+                        <div class="feature-item fragment">🗂️ Working directory</div>
+                    </div>
+                    <div class="fragment" style="text-align: center; margin-top: 30px; font-size: 1.3em;">
+                        <span class="hidden-complexity">Simple bash</span> →
+                        <span class="revealed-complexity">Production-grade execution 🛡️</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 16: OpenTelemetry -->
+            <section>
+                <h2>🔭 Why OpenTelemetry Matters</h2>
+                <div class="highlight-box">
+                    <h3 style="color: var(--accent-orange);">Native Support in Airflow 3</h3>
+                    <pre style="margin: 15px 0;"><code class="language-ini">[traces]
+otel_on = True
+otel_host = localhost
+otel_port = 4317</code></pre>
+                </div>
+                <div class="two-columns fragment" style="margin-top: 30px;">
+                    <div>
+                        <h4 style="color: var(--accent-orange);">Benefits:</h4>
+                        <ul>
+                            <li>📊 Distributed tracing</li>
+                            <li>🐛 Debug failures fast</li>
+                            <li>⚡ Find bottlenecks</li>
+                            <li>📈 Monitor patterns</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 style="color: var(--accent-orange);">Capabilities:</h4>
+                        <ul>
+                            <li>🔗 Cross-service traces</li>
+                            <li>💰 Production-ready</li>
+                            <li>🔍 Deep visibility</li>
+                            <li>📊 Performance metrics</li>
+                        </ul>
+                    </div>
+                </div>
+                <p class="fragment" style="text-align: center; font-size: 1.3em; margin-top: 30px;">
+                    No more blind debugging! 👀
+                </p>
+            </section>
+
+
+            <!-- Slide 16: Discovery 2 - Background Workers -->
+            <section>
+                <h2>🔍 Discovery #2: Background Workers Never Sleep</h2>
+                <div class="discovery-card">
+                    <p style="font-size: 1.2em; margin-bottom: 25px;">Even when running a simple task, Airflow continuously monitors health and metrics</p>
+
+                    <h3 style="color: var(--accent-orange); margin-bottom: 20px;">Always Running:</h3>
+                    <div class="two-columns" style="gap: 30px;">
+                        <div>
+                            <div class="fragment" style="background: #2a2a4e; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                                <strong style="color: #FF9800;">💓 Heartbeat Operations</strong><br>
+                                <code style="font-size: 0.85em;">perform_heartbeat</code><br>
+                                <code style="font-size: 0.85em;">heartbeat</code>
+                            </div>
+                            <div class="fragment" style="background: #2a2a4e; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                                <strong style="color: #FF9800;">📊 Metrics Collection</strong><br>
+                                <code style="font-size: 0.85em;">emit_metrics</code><br>
+                                <code style="font-size: 0.85em;">emit_pool_metrics</code>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="fragment" style="background: #2a2a4e; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                                <strong style="color: #FF9800;">🔄 Event Handling</strong><br>
+                                <code style="font-size: 0.85em;">handle_events</code><br>
+                                <code style="font-size: 0.85em;">handle_failed_triggers</code>
+                            </div>
+                            <div class="fragment" style="background: #2a2a4e; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                                <strong style="color: #FF9800;">🧹 Cleanup</strong><br>
+                                <code style="font-size: 0.85em;">clean_unused</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="fragment" style="text-align: center; margin-top: 25px; font-size: 1.2em; color: var(--airflow-teal);">
+                        🛡️ This ensures <strong style="color: var(--accent-orange);">reliability</strong> and <strong style="color: var(--accent-orange);">observability</strong> at all times
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 14: Discovery 3 -->
+            <section>
+                <h2>💡 Discovery #3: Provider Architecture</h2>
+                <div class="discovery-card">
+                    <h3 style="color: var(--accent-orange);">Evolution of BashOperator</h3>
+                    <div style="margin: 30px 0;">
+                        <div class="fragment" style="background: #2a2a4e; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                            <strong>Airflow 2:</strong><br>
+                            <code style="color: var(--airflow-teal);">airflow.operators.bash</code>
+                        </div>
+                        <div class="fragment" style="text-align: center; font-size: 2em; color: var(--accent-orange);">↓</div>
+                        <div class="fragment" style="background: #2a4e2a; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                            <strong>Airflow 3:</strong><br>
+                            <code style="color: var(--airflow-teal);">airflow.providers.standard.operators.bash</code>
+                        </div>
+                    </div>
+                    <div class="fragment highlight-box">
+                        <strong style="color: var(--accent-orange);">WHY IT MATTERS:</strong>
+                        <ul style="margin-top: 10px;">
+                            <li>Is that the only change</li>
+                            <li>Airflow 2 and 3 Architecture Differences?</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+
+            <!-- Slide 23: Data Sources and Transition -->
+            <section>
+                <h2>Airflow 3 and 2: Inner Workings Comparison</h2>
+                <h3 style="color: var(--accent-orange); margin-bottom: 30px;">🔍 Three Data Sources for Deep Analysis</h3>
+
+                <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 40px;">
+                    <div class="discovery-card" style="padding: 25px;">
+                        <div style="font-size: 2.5em; margin-bottom: 15px;">📋</div>
+                        <h4 style="color: var(--accent-cyan); margin-bottom: 15px;">1. Airflow Components Raw Logs</h4>
+                        <p style="font-size: 0.85em;">Direct component output and system logs</p>
+                        <p style="font-size: 0.75em; color: var(--accent-green); margin-top: 10px;">✓ Airflow 2 & 3</p>
+                    </div>
+
+                    <div class="discovery-card" style="padding: 25px; position: relative;" id="otel-card">
+                        <div style="font-size: 2.5em; margin-bottom: 15px;">📡</div>
+                        <h4 style="color: var(--accent-purple); margin-bottom: 15px;">2. OpenTelemetry Tracking</h4>
+                        <p style="font-size: 0.85em;">Airflow Core Components tracing</p>
+                        <p style="font-size: 0.75em; color: var(--accent-green); margin-top: 10px;">✓ Airflow 3 only</p>
+                        <div class="fragment" data-fragment-index="2" style="position: absolute; top: 15px; right: 15px; pointer-events: none;">
+                            <div style="background: rgba(255, 68, 68, 0.2); border: 2px solid #ff4444; border-radius: 8px; padding: 8px 12px;">
+                                <span style="font-size: 0.9em; color: #ff4444; font-weight: 600;">❌ Not in Airflow 2</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="discovery-card" style="padding: 25px;">
+                        <div style="font-size: 2.5em; margin-bottom: 15px;">🎯</div>
+                        <h4 style="color: var(--accent-orange); margin-bottom: 15px;">3. Task Level Tracking</h4>
+                        <p style="font-size: 0.85em;">Individual task execution traces</p>
+                        <p style="font-size: 0.75em; color: var(--accent-green); margin-top: 10px;">✓ Airflow 3 & 2</p>
+                    </div>
+                </div>
+
+                <div class="quote-box fragment" data-fragment-index="1" style="margin-top: 40px;">
+                    <h3 style="color: var(--accent-cyan); margin-bottom: 20px;">⚡ Next: Comparing Airflow 3 vs 2</h3>
+                    <p style="font-size: 1.1em;">
+                        Let's use available data sources to analyze the architectural differences
+                        and performance characteristics between Airflow 3 and Airflow 2
+                    </p>
+                </div>
+            </section>
+
+            <!-- Slide 24: Airflow 2 Setup and Component Comparison -->
+            <section>
+                <h2>Airflow 2 Setup</h2>
+                <h3 style="color: var(--accent-orange); margin-bottom: 30px;">📦 Installation and Configuration</h3>
+
+                <div style="margin-bottom: 30px;">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 15px;">Installation Commands:</h4>
+                    <pre style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; font-size: 0.7em;"><code class="language-bash">pip install "apache-airflow==2.9.3" \
+  --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.10.txt"
+
+airflow standalone</code></pre>
+                    <p style="font-size: 0.85em; margin-top: 10px; color: var(--accent-yellow);">
+                        ⚙️ <strong>airflow.cfg:</strong> Webserver runs on port <strong>8001</strong> (Airflow 3 uses <strong>8000</strong>)
+                    </p>
+                </div>
+
+            </section>
+
+            <!-- Slide 25: Raw Logs Comparison -->
+            <section>
+                <h2>Raw Logs Comparison</h2>
+                <h3 style="color: var(--accent-orange); margin-bottom: 30px;">📋 Component Detection from Logs</h3>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div>
+                        <h4 style="color: var(--accent-green); margin-bottom: 15px;">Airflow 2.9.3 Components</h4>
+                        <img src="airflow_2_raw_logs.png" alt="Airflow 2 Logs" style="border-radius: 8px; width: 100%; border: 1px solid #444;">
+                        <p style="font-size: 0.7em; margin-top: 10px; color: var(--accent-yellow);">
+                            ✓ 3 Main Components: webserver, triggerer, scheduler
+                        </p>
+                    </div>
+                    <div>
+                        <h4 style="color: var(--accent-cyan); margin-bottom: 15px;">Airflow 3.0 Components</h4>
+                        <img src="airflow-3-standalone-raw-logs.png" alt="Airflow 3 Logs" style="border-radius: 8px; width: 100%; border: 1px solid #444;">
+                        <p style="font-size: 0.7em; margin-top: 10px; color: var(--accent-green);">
+                            ✓ 4+ Main Components: triggerer, scheduler, dag-processor, <strong style="color: var(--accent-orange);">api-server</strong>
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+
+
+            <!-- Slide 24: Airflow 2 and 3 Component Comparison -->
+            <section>
+                <h2>Airflow 3 and 2 Component Comparison</h2>
+
+                <div class="fragment">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 20px;">🔍 Component Architecture Comparison</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="discovery-card" style="padding: 20px;">
+                            <h4 style="color: var(--accent-green); margin-bottom: 5px; display: flex; align-items: center;">
+                                <img src="airflow_logo.svg" alt="Airflow Logo" style="height: 1.2em; margin-right: 10px;"> Airflow 2.9.3
+                            </h4>
+                            <ul style="font-size: 0.85em; text-align: left; line-height: 1.6; margin-top: 5px;">
+                                <li>✓ Scheduler</li>
+                                <li>✓ DAG Processor</li>
+                                <li>✓ Webserver (Flask)</li>
+                                <li>✓ Triggerer</li>
+                                <li>✓ Worker</li>
+                                <li style="color: var(--accent-red);">❌ <strong>No API Server</strong></li>
+                                <li style="color: var(--accent-red);">❌ <strong>No Native OpenTelemetry</strong></li>
+                            </ul>
+                        </div>
+
+                        <div class="discovery-card" style="padding: 20px;">
+                            <h4 style="color: var(--accent-cyan); margin-bottom: 5px; display: flex; align-items: center;">
+                                <img src="airflow_logo.svg" alt="Airflow Logo" style="height: 1.2em; margin-right: 10px;"> Airflow 3.0
+                            </h4>
+                            <ul style="font-size: 0.85em; text-align: left; line-height: 1.6; margin-top: 5px;">
+                                <li>✓ Scheduler</li>
+                                <li>✓ DAG Processor</li>
+                                <li style="color: var(--accent-red);">❌ <strong>Webserver (Flask)</strong></li>
+                                <li>✓ Triggerer</li>
+                                <li>✓ Worker</li>
+                                <li style="color: var(--accent-green);">✓ <strong>API Server (FastAPI)</strong></li>
+                                <li style="color: var(--accent-green);">✓ <strong>Native OpenTelemetry</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="quote-box fragment" style="margin-top: 30px;">
+                    <p style="font-size: 1em;">
+                        📊 <strong>Key Architectural Change:</strong> Airflow 3 introduces a separate FastAPI-based API server
+                        and native OpenTelemetry support for distributed tracing
+                    </p>
+                </div>
+            </section>
+
+            <!-- Slide 19: Practical Applications -->
+            <section>
+                <h2>How to Use This Knowledge</h2>
+                <div class="stats-grid">
+                    <div class="stat-card fragment">
+                        <div style="font-size: 2em; margin-bottom: 10px;">🔍</div>
+                        <h3 style="color: var(--accent-orange); font-size: 1.2em;">For Debugging</h3>
+                        <ul style="text-align: left; font-size: 0.9em; margin-top: 15px;">
+                            <li>Find stuck execution</li>
+                            <li>Identify failing modules</li>
+                            <li>See exact call stack</li>
+                        </ul>
+                    </div>
+                    <div class="stat-card fragment">
+                        <div style="font-size: 2em; margin-bottom: 10px;">⚡</div>
+                        <h3 style="color: var(--accent-orange); font-size: 1.2em;">For Optimization</h3>
+                        <ul style="text-align: left; font-size: 0.9em; margin-top: 15px;">
+                            <li>Spot bottlenecks</li>
+                            <li>Reduce template renders</li>
+                            <li>Minimize context ops</li>
+                        </ul>
+                    </div>
+                    <div class="stat-card fragment">
+                        <div style="font-size: 2em; margin-bottom: 10px;">📚</div>
+                        <h3 style="color: var(--accent-orange); font-size: 1.2em;">For Learning</h3>
+                        <ul style="text-align: left; font-size: 0.9em; margin-top: 15px;">
+                            <li>Understand internals</li>
+                            <li>See design patterns</li>
+                            <li>Know what to extend</li>
+                        </ul>
+                    </div>
+                    <div class="stat-card fragment">
+                        <div style="font-size: 2em; margin-bottom: 10px;">📈</div>
+                        <h3 style="color: var(--accent-orange); font-size: 1.2em;">For Production</h3>
+                        <ul style="text-align: left; font-size: 0.9em; margin-top: 15px;">
+                            <li>Monitor execution health</li>
+                            <li>Set up alerts</li>
+                            <li>Capacity planning</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 21: Try It Yourself -->
+            <section>
+                <h2>Try It Yourself!</h2>
+                <div class="highlight-box" style="text-align: center;">
+                    <h3 style="color: var(--accent-orange); margin-bottom: 20px;">📦 GitHub Repository</h3>
+                    <div style="font-size: 1.5em; color: var(--airflow-teal); margin: 20px 0;">
+                        github.com/your-username/airflow-tracer
+                    </div>
+                    <div style="background: white; width: 200px; height: 200px; margin: 20px auto; display: flex; align-items: center; justify-content: center; border-radius: 10px;">
+                        <div style="color: #333; font-size: 0.8em;">[QR CODE]</div>
+                    </div>
+                </div>
+                <div class="two-columns" style="margin-top: 30px;">
+                    <div>
+                        <h4 style="color: var(--accent-orange);">What's Included:</h4>
+                        <ul>
+                            <li>✓ Complete tracing script</li>
+                            <li>✓ OTLP Collector config</li>
+                            <li>✓ Docker Compose setup</li>
+                            <li>✓ Step-by-step guide</li>
+                            <li>✓ More examples</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 style="color: var(--accent-orange);">Requirements:</h4>
+                        <ul>
+                            <li>🐍 Python 3.10+</li>
+                            <li>✈️ Airflow 3.0+</li>
+                            <li>🐳 Docker</li>
+                            <li>📡 OpenTelemetry</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+
+            <!-- Slide 26: Questions -->
+            <section class="center-content" data-background-gradient="linear-gradient(135deg, #1a1a2e, #16213e)">
+                <h1 style="font-size: 4em;">Questions?</h1>
+                <div class="large-emoji pulse" style="margin: 50px 0;">🤔</div>
+                <p style="font-size: 1.5em; color: var(--accent-orange);">Let's discuss!</p>
+            </section>
+
+            <!-- Slide 27: Thank You -->
+            <section class="center-content" data-background-gradient="linear-gradient(135deg, #00C7B7, #0099a8)">
+                <h1 style="font-size: 3.5em; color: white; margin-bottom: 30px;">Thank You! 🙏</h1>
+                <div style="font-size: 1.5em; color: white; margin: 30px 0;">
+                    <strong>Your Name</strong><br>
+                    Your Title / Company<br>
+                    <span style="font-size: 0.8em;">@yourusername • your@email.com</span>
+                </div>
+                <div class="quote-box" style="background: rgba(255,255,255,0.1); border-color: white; margin-top: 50px;">
+                    <p style="font-size: 1.3em; color: white; font-style: italic;">
+                        "Simple code can hide beautiful complexity"
+                    </p>
+                </div>
+                <div style="margin-top: 40px; font-size: 0.9em; color: rgba(255,255,255,0.8);">
+                    ⭐ Star the repo • 🔗 Share the knowledge • 💬 Keep in touch
+                </div>
+            </section>
+
+
+            <!-- Slide 15: Real Discovery 1 - Scheduler Dominance -->
+            <section>
+                <h2>🔍 Real Discovery #1: Scheduler Dominates</h2>
+                <div class="discovery-card">
+                    <p style="font-size: 1.2em; margin-bottom: 25px;">Of the 31 traced Airflow operations, the <strong style="color: var(--accent-orange);">Scheduler</strong> has the largest footprint</p>
+
+                    <div class="stats-grid" style="max-width: 800px; margin: 20px auto;">
+                        <div class="stat-card fragment">
+                            <div class="stat-number" style="color: #4CAF50;">7</div>
+                            <div class="stat-label">Scheduler Ops</div>
+                        </div>
+                        <div class="stat-card fragment">
+                            <div class="stat-number" style="color: #2196F3;">3</div>
+                            <div class="stat-label">Triggerer Ops</div>
+                        </div>
+                        <div class="stat-card fragment">
+                            <div class="stat-number" style="color: #FF9800;">6</div>
+                            <div class="stat-label">Monitoring Ops</div>
+                        </div>
+                        <div class="stat-card fragment">
+                            <div class="stat-number" style="color: #9C27B0;">15</div>
+                            <div class="stat-label">DAG Runs</div>
+                        </div>
+                    </div>
+
+                    <div class="fragment highlight-box" style="margin-top: 25px;">
+                        <strong style="color: var(--accent-orange);">KEY INSIGHT:</strong><br>
+                        Scheduler operations like <code>_schedule_dag_run</code>, <code>trigger_tasks</code>, and <code>_update_state</code> are core to Airflow's orchestration engine
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 17: Key Takeaways -->
+            <section>
+                <h2>🎯 Key Takeaways</h2>
+                <div style="margin-top: 30px;">
+                    <div class="fragment highlight-box">
+                        <strong style="color: var(--airflow-teal); font-size: 1.3em;">1️⃣ SIMPLE ISN'T SIMPLE</strong><br>
+                        <span style="color: #ccc;">Even basic operators are sophisticated underneath</span>
+                    </div>
+                    <div class="fragment highlight-box">
+                        <strong style="color: var(--airflow-teal); font-size: 1.3em;">2️⃣ OBSERVABILITY IS ESSENTIAL</strong><br>
+                        <span style="color: #ccc;">OpenTelemetry gives X-ray vision into Airflow</span>
+                    </div>
+                    <div class="fragment highlight-box">
+                        <strong style="color: var(--airflow-teal); font-size: 1.3em;">3️⃣ AIRFLOW 3 IS MODULAR</strong><br>
+                        <span style="color: #ccc;">Provider architecture enables flexibility</span>
+                    </div>
+                    <div class="fragment highlight-box">
+                        <strong style="color: var(--airflow-teal); font-size: 1.3em;">4️⃣ TRACING IS POWERFUL</strong><br>
+                        <span style="color: #ccc;">Essential for debugging and performance tuning</span>
+                    </div>
+                    <div class="fragment highlight-box">
+                        <strong style="color: var(--airflow-teal); font-size: 1.3em;">5️⃣ KNOW YOUR TOOLS</strong><br>
+                        <span style="color: #ccc;">Understanding internals makes you a better developer</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 19: Function Hotspots -->
+            <section>
+                <h2>⚡ Most Called Functions</h2>
+                <h3 style="color: var(--accent-orange); margin-bottom: 20px;">Top 10 Function Calls</h3>
+                <div class="bar-chart" style="font-size: 0.9em;">
+                    <div class="bar-item fragment">
+                        <div class="bar-label">get_template_env()</div>
+                        <div class="bar-visual" style="width: 0;" data-width="75%"></div>
+                        <div class="bar-count">×12</div>
+                    </div>
+                    <div class="bar-item fragment">
+                        <div class="bar-label">render_template()</div>
+                        <div class="bar-visual" style="width: 0;" data-width="65%"></div>
+                        <div class="bar-count">×10</div>
+                    </div>
+                    <div class="bar-item fragment">
+                        <div class="bar-label">get_context()</div>
+                        <div class="bar-visual" style="width: 0;" data-width="55%"></div>
+                        <div class="bar-count">×8</div>
+                    </div>
+                    <div class="bar-item fragment">
+                        <div class="bar-label">log()</div>
+                        <div class="bar-visual" style="width: 0;" data-width="50%"></div>
+                        <div class="bar-count">×7</div>
+                    </div>
+                    <div class="bar-item fragment">
+                        <div class="bar-label">xcom_push()</div>
+                        <div class="bar-visual" style="width: 0;" data-width="45%"></div>
+                        <div class="bar-count">×6</div>
+                    </div>
+                </div>
+            </section>
+
+
+
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reveal.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/plugin/highlight/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/plugin/notes/notes.min.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            slideNumber: 'c/t',
+            transition: 'slide',
+            transitionSpeed: 'default',
+            backgroundTransition: 'fade',
+            plugins: [ RevealHighlight, RevealNotes ],
+            width: 1280,
+            height: 720,
+            margin: 0.15,
+            minScale: 0.2,
+            maxScale: 2.0,
+            center: false,
+            scrollActivationWidth: null,
+        });
+
+        // Animate bar charts when they appear
+        Reveal.on('fragmentshown', event => {
+            if (event.fragment.classList.contains('bar-item')) {
+                const bar = event.fragment.querySelector('.bar-visual');
+                if (bar) {
+                    setTimeout(() => {
+                        bar.style.width = bar.dataset.width;
+                    }, 100);
+                }
+            }
+        });
+
+        // Add keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Press 'B' or '.' to toggle black screen
+            if (e.key === 'b' || e.key === 'B' || e.key === '.') {
+                Reveal.configure({ showSlideNumber: false });
+            }
+        });
+
+        // Laser pointer effect
+        const laserPointer = document.getElementById('laser-pointer');
+
+        document.addEventListener('mousemove', (e) => {
+            laserPointer.style.left = e.clientX + 'px';
+            laserPointer.style.top = e.clientY + 'px';
+            laserPointer.classList.add('active');
+        });
+
+        document.addEventListener('mouseout', () => {
+            laserPointer.classList.remove('active');
+        });
+
+        document.addEventListener('mouseenter', () => {
+            laserPointer.classList.add('active');
+        });
+
+        // Color-coding animation for operations slide - Two-step animation
+        let animationStep = 0; // 0 = not started, 1 = first category colored, 2 = all colored
+        let isOnOperationsSlide = false;
+
+        Reveal.on('slidechanged', event => {
+            isOnOperationsSlide = event.currentSlide.id === 'operations-slide';
+
+            if (isOnOperationsSlide) {
+                animationStep = 0;
+                // Reset all items
+                const operationItems = document.querySelectorAll('#operations-slide .operation-item');
+                operationItems.forEach(item => {
+                    item.classList.remove('scheduler', 'triggerer', 'monitoring', 'dag');
+                    const label = item.querySelector('.category-label');
+                    if (label) label.classList.remove('show');
+                });
+                // Hide category legend
+                const categoryLegend = document.getElementById('category-legend');
+                if (categoryLegend) {
+                    categoryLegend.style.display = 'none';
+                    categoryLegend.style.opacity = '0';
+                }
+            }
+        });
+
+        // Also listen to keyboard events
+        document.addEventListener('keydown', (e) => {
+            if (isOnOperationsSlide && animationStep < 2) {
+                if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'Enter') {
+                    handleAnimationStep();
+                }
+            }
+        });
+
+        // Click anywhere on the slide to trigger
+        document.addEventListener('click', (e) => {
+            if (isOnOperationsSlide && animationStep < 2) {
+                const clickedSlide = e.target.closest('section');
+                if (clickedSlide && clickedSlide.id === 'operations-slide') {
+                    handleAnimationStep();
+                }
+            }
+        });
+
+        function handleAnimationStep() {
+            if (animationStep === 0) {
+                // First click: Color only scheduler category
+                animationStep = 1;
+                colorCategory('scheduler');
+                showCategoryExplanation();
+            } else if (animationStep === 1) {
+                // Second click: Color all remaining categories
+                animationStep = 2;
+                colorRemainingCategories();
+            }
+        }
+
+        function colorCategory(categoryName) {
+            const operationItems = document.querySelectorAll('#operations-slide .operation-item');
+            let delay = 0;
+
+            operationItems.forEach((item) => {
+                const category = item.getAttribute('data-category');
+                if (category === categoryName) {
+                    setTimeout(() => {
+                        item.classList.add(category);
+
+                        // Show category label after a brief delay
+                        setTimeout(() => {
+                            const label = item.querySelector('.category-label');
+                            if (label) label.classList.add('show');
+                        }, 200);
+                    }, delay);
+                    delay += 100; // Slower animation (was 50ms)
+                }
+            });
+        }
+
+        function colorRemainingCategories() {
+            const operationItems = document.querySelectorAll('#operations-slide .operation-item');
+            let delay = 0;
+            const categoriesToColor = ['triggerer', 'monitoring', 'dag'];
+
+            operationItems.forEach((item) => {
+                const category = item.getAttribute('data-category');
+                if (category && categoriesToColor.includes(category)) {
+                    setTimeout(() => {
+                        item.classList.add(category);
+
+                        // Show category label after a brief delay
+                        setTimeout(() => {
+                            const label = item.querySelector('.category-label');
+                            if (label) label.classList.add('show');
+                        }, 200);
+                    }, delay);
+                    delay += 30; // Faster for remaining categories
+                }
+            });
+        }
+
+        function showCategoryExplanation() {
+            // Show category legend
+            const categoryLegend = document.getElementById('category-legend');
+            if (categoryLegend) {
+                categoryLegend.style.display = 'block';
+                setTimeout(() => {
+                    categoryLegend.style.opacity = '1';
+                }, 100);
+            }
+        }
+    </script>
+</body>
+</html>
